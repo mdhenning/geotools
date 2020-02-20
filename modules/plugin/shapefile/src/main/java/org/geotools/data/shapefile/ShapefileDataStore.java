@@ -39,6 +39,7 @@ import org.geotools.data.FeatureReader;
 import org.geotools.data.FeatureWriter;
 import org.geotools.data.FileDataStore;
 import org.geotools.data.Query;
+import org.geotools.data.StyleStore;
 import org.geotools.data.Transaction;
 import org.geotools.data.shapefile.dbf.DbaseFileException;
 import org.geotools.data.shapefile.dbf.DbaseFileHeader;
@@ -53,6 +54,7 @@ import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.feature.FeatureTypes;
 import org.geotools.feature.NameImpl;
 import org.geotools.referencing.wkt.Formattable;
+import org.geotools.styling.Style;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
@@ -68,7 +70,7 @@ import org.opengis.feature.type.Name;
 import org.opengis.filter.Filter;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 
-public class ShapefileDataStore extends ContentDataStore implements FileDataStore {
+public class ShapefileDataStore extends ContentDataStore implements FileDataStore, StyleStore {
 
     // User-data keyword names for storing the original field name and its
     // instance number when the field name is replaced with a new name built
@@ -562,4 +564,28 @@ public class ShapefileDataStore extends ContentDataStore implements FileDataStor
         }
         removeEntry(entry.getName());
     }
+
+	@Override
+	public boolean hasStyle(String typeName) throws IOException {
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public Style getStyle(String typeName) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public void removeStyle(String typeName) throws IOException {
+		// TODO Auto-generated method stub
+		
+	}
+
+	@Override
+	public void storeStyle(String typeName, Style style) throws IOException {
+		// TODO Auto-generated method stub
+		
+	}
 }
