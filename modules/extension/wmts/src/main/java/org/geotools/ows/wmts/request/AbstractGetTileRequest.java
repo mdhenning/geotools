@@ -46,7 +46,6 @@ import org.geotools.tile.Tile;
 import org.geotools.util.logging.Logging;
 import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
-import org.opengis.referencing.operation.TransformException;
 
 /**
  * (Based on existing work by rgould for WMS service)
@@ -58,9 +57,6 @@ public abstract class AbstractGetTileRequest extends AbstractWMTSRequest impleme
 
     /** MAXTILES */
     private static final int MAXTILES = 256;
-
-    /** DPI */
-    private static final double DPI = 90.7142857;
 
     static WMTSTileFactory factory = new WMTSTileFactory();
 
@@ -265,22 +261,12 @@ public abstract class AbstractGetTileRequest extends AbstractWMTSRequest impleme
                                         WMTSTileService.EXTRA_HEADERS, extra -> new HashMap<>())))
                 .putAll(this.headers);
 
-        // zoomLevel = factory.getZoomLevel(zoom, wmtsService);
-        int scale = 0;
-
-        try {
-            scale =
-                    (int)
-                            Math.round(
-                                    RendererUtilities.calculateScale(
-                                            requestedBBox, requestedWidth, requestedHeight, DPI));
-        } catch (FactoryException | TransformException ex) {
-            LOGGER.log(Level.WARNING, "Failed to calculate scale", ex);
-            throw new ServiceException("Failed to calculate scale: " + ex.getMessage());
-        }
+        double scale =
+                Math.round(
+                        RendererUtilities.calculateOGCScale(requestedBBox, requestedWidth, null));
 
         // these are all the tiles available in the tilematrix within the requested bbox
-        tiles = wmtsService.findTilesInExtent(requestedBBox, scale, false, MAXTILES);
+        tiles = wmtsService.findTilesInExtent(requestedBBox, (int) scale, false, MAXTILES);
         if (LOGGER.isLoggable(Level.FINE))
             LOGGER.fine("found " + tiles.size() + " tiles in " + requestedBBox);
         if (tiles.isEmpty()) {
@@ -351,12 +337,15 @@ public abstract class AbstractGetTileRequest extends AbstractWMTSRequest impleme
             }
         }
 
-        // If the layer provides the requested CRS, use it
+        // See if the layer supports the requested SRS. Matching against the SRS rather than the
+        // full CRS will avoid missing matches due to Longitude first being set on the request
+        // CRS and therefore minimise transformations that need to be performed on the received tile
+        String requestSRS = CRS.toSRS(requestCRS);
         for (TileMatrixSet matrixSet : capabilities.getMatrixSets()) {
 
             CoordinateReferenceSystem matrixCRS = matrixSet.getCoordinateReferenceSystem();
-
-            if (CRS.equalsIgnoreMetadata(requestCRS, matrixCRS)) { // matching SRS
+            String matrixSRS = CRS.toSRS(matrixCRS);
+            if (requestSRS.equals(matrixSRS)) { // matching SRS
                 if (links.containsKey((matrixSet.getIdentifier()))) { // and available for
                     // this layer
                     if (LOGGER.isLoggable(Level.FINE)) {

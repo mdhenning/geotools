@@ -119,6 +119,11 @@ class WMTSTile extends Tile {
     private URL getRESTurl(String baseUrl, TileIdentifier tileIdentifier) throws RuntimeException {
         String tileMatrix = service.getTileMatrix(tileIdentifier.getZ()).getIdentifier();
 
+        if (baseUrl.indexOf("{style}") != -1)
+            baseUrl = baseUrl.replace("{style}", service.getStyleName());
+        else if (baseUrl.indexOf("{Style}") != -1)
+            baseUrl = baseUrl.replace("{Style}", service.getStyleName());
+
         baseUrl = baseUrl.replace("{TileMatrixSet}", service.getTileMatrixSetName());
         baseUrl = baseUrl.replace("{TileMatrix}", "" + tileMatrix);
         baseUrl = baseUrl.replace("{TileCol}", "" + tileIdentifier.getX());

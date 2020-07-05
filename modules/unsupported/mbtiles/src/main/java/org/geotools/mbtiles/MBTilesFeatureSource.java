@@ -16,16 +16,11 @@
  */
 package org.geotools.mbtiles;
 
+import static org.geotools.mbtiles.MBTilesDataStore.DEFAULT_CRS;
+
 import java.io.IOException;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -38,11 +33,13 @@ import org.geotools.data.store.ContentEntry;
 import org.geotools.data.store.ContentFeatureSource;
 import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.geotools.mbtiles.CompositeSimpleFeatureReader.ReaderSupplier;
+import org.geotools.referencing.CRS;
 import org.geotools.util.factory.Hints;
 import org.geotools.util.logging.Logging;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
 import org.opengis.filter.Filter;
+import org.opengis.referencing.operation.TransformException;
 
 class MBTilesFeatureSource extends ContentFeatureSource {
 
@@ -64,16 +61,27 @@ class MBTilesFeatureSource extends ContentFeatureSource {
 
     @Override
     protected void addHints(Set<Hints.Key> hints) {
+
         hints.add(Hints.GEOMETRY_SIMPLIFICATION);
+        hints.add(Hints.GEOMETRY_GENERALIZATION);
+        hints.add(Hints.GEOMETRY_CLIP);
     }
 
     @Override
     protected ReferencedEnvelope getBoundsInternal(Query query) throws IOException {
-        // all mbtiles likely have a root tile that covers the world, the real intended
-        // bound is normally found at the max zoom level. However, the latest zoom level is the one
-        // with the most tiles, this takes ages on large mbtiles,
-        // so best to have it disabled... or maybe make it optional later
-        return null;
+        Filter f = query.getFilter();
+        if (f == null || f.equals(Filter.INCLUDE)) {
+            try {
+                return new ReferencedEnvelope(
+                        CRS.transform(mbtiles.loadMetaData().getBounds(), DEFAULT_CRS));
+            } catch (TransformException e) {
+                throw new RuntimeException("Unable to retrieve bounds from mbtiles metadata", e);
+            }
+        } else {
+            // summing up all feature bounds would be expensive.
+            // returning null
+            return null;
+        }
     }
 
     @Override
@@ -101,11 +109,15 @@ class MBTilesFeatureSource extends ContentFeatureSource {
                             .flatMap(tb -> getReaderSuppliersFor(z, tb).stream())
                             .collect(Collectors.toList());
 
+            FeatureReader reader;
             if (suppliers.isEmpty()) {
-                return new EmptyFeatureReader<>(getSchema());
+                reader = new EmptyFeatureReader<>(getSchema());
+            } else {
+                reader = new CompositeSimpleFeatureReader(getSchema(), suppliers);
             }
 
-            return new CompositeSimpleFeatureReader(getSchema(), suppliers);
+            return reader;
+
         } catch (SQLException e) {
             throw new IOException(e);
         }
@@ -177,7 +189,11 @@ class MBTilesFeatureSource extends ContentFeatureSource {
     private long getTargetZLevel(Query query) throws SQLException {
         return Optional.ofNullable(query)
                 .map(Query::getHints)
-                .map(h -> h.get(Hints.GEOMETRY_SIMPLIFICATION))
+                .map(
+                        h ->
+                                h.get(Hints.GEOMETRY_GENERALIZATION) != null
+                                        ? h.get(Hints.GEOMETRY_GENERALIZATION)
+                                        : h.get(Hints.GEOMETRY_SIMPLIFICATION))
                 .map(
                         d -> {
                             try {

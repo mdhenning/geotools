@@ -37,6 +37,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 import org.geotools.data.jdbc.FilterToSQL;
+import org.geotools.factory.CommonFactoryFinder;
+import org.geotools.filter.FilterAttributeExtractor;
+import org.geotools.filter.function.JsonPointerFunction;
+import org.geotools.filter.visitor.DuplicatingFilterVisitor;
+import org.geotools.filter.visitor.PostPreProcessFilterSplittingVisitor;
 import org.geotools.geometry.jts.CircularRing;
 import org.geotools.geometry.jts.CircularString;
 import org.geotools.geometry.jts.CompoundCurve;
@@ -70,6 +75,11 @@ import org.locationtech.jts.io.WKTWriter;
 import org.opengis.feature.simple.SimpleFeatureType;
 import org.opengis.feature.type.AttributeDescriptor;
 import org.opengis.feature.type.GeometryDescriptor;
+import org.opengis.filter.Filter;
+import org.opengis.filter.FilterFactory2;
+import org.opengis.filter.expression.Expression;
+import org.opengis.filter.expression.Function;
+import org.opengis.filter.expression.Literal;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 
 public class PostGISDialect extends BasicSQLDialect {
@@ -449,9 +459,10 @@ public class PostGISDialect extends BasicSQLDialect {
 
                         // reproject and merge
                         if (!env.isNull()) {
-                            CoordinateReferenceSystem crs =
-                                    ((GeometryDescriptor) att).getCoordinateReferenceSystem();
-                            result.add(new ReferencedEnvelope(env, crs));
+                            CoordinateReferenceSystem flatCRS =
+                                    CRS.getHorizontalCRS(
+                                            featureType.getCoordinateReferenceSystem());
+                            result.add(new ReferencedEnvelope(env, flatCRS));
                         }
                     }
                     rs.close();
@@ -1489,5 +1500,62 @@ public class PostGISDialect extends BasicSQLDialect {
         return version == null || version.compareTo(V_2_1_0) >= 0
                 ? "ST_EstimatedExtent"
                 : "ST_Estimated_Extent";
+    }
+
+    public Filter[] splitFilter(Filter filter, SimpleFeatureType schema) {
+
+        PostPreProcessFilterSplittingVisitor splitter =
+                new PostPreProcessFilterSplittingVisitor(
+                        dataStore.getFilterCapabilities(), schema, null) {
+
+                    @Override
+                    public Object visit(Function expression, Object notUsed) {
+                        if (expression instanceof JsonPointerFunction) {
+                            // takes the json pointer param to check if
+                            // can be encoded
+                            Expression param = expression.getParameters().get(1);
+                            if (!(param instanceof Literal)) {
+                                expression = constantParameterToLiteral(expression, param, 1);
+                            }
+                        }
+                        return super.visit(expression, notUsed);
+                    }
+
+                    @Override
+                    protected boolean supports(Object value) {
+                        if (value instanceof JsonPointerFunction) {
+                            Expression param = ((Function) value).getParameters().get(1);
+                            return param instanceof Literal;
+                        } else return super.supports(value);
+                    }
+                };
+        filter.accept(splitter, null);
+
+        Filter[] split = new Filter[2];
+        split[0] = splitter.getFilterPre();
+        split[1] = splitter.getFilterPost();
+
+        return split;
+    }
+
+    // Given a function and one of its parameters check if it is a constant one
+    // and eventually resolve it to Literal setting to the function,
+    // after doing a defensive copy of it.
+    private Function constantParameterToLiteral(
+            Function expression, Expression param, int paramIdx) {
+        FilterAttributeExtractor extractor = new FilterAttributeExtractor();
+        param.accept(extractor, null);
+        if (extractor.isConstantExpression()) {
+            // defensive copy of filter before manipulating it
+            DuplicatingFilterVisitor duplicating = new DuplicatingFilterVisitor();
+            Function duplicated = (Function) expression.accept(duplicating, null);
+            // if constant can encode
+            Object result = param.evaluate(null);
+            FilterFactory2 ff = CommonFactoryFinder.getFilterFactory2();
+            // setting constant expression evaluated to literal
+            duplicated.getParameters().set(paramIdx, ff.literal(result));
+            return duplicated;
+        }
+        return expression;
     }
 }

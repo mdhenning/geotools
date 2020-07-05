@@ -46,6 +46,7 @@ import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
+import javax.measure.MetricPrefix;
 import javax.measure.Unit;
 import javax.sql.DataSource;
 import org.geotools.measure.Units;
@@ -141,8 +142,7 @@ import org.opengis.util.InternationalString;
 import si.uom.NonSI;
 import si.uom.SI;
 import systems.uom.common.USCustomary;
-import tec.uom.se.AbstractUnit;
-import tec.uom.se.unit.MetricPrefix;
+import tech.units.indriya.AbstractUnit;
 
 /**
  * A coordinate reference system factory backed by the EPSG database tables.
@@ -482,7 +482,7 @@ public abstract class DirectEpsgFactory extends DirectAuthorityFactory
     /**
      * The buffered authority factory, or {@code this} if none. This field is set to a different
      * value by {@link ThreadedEpsgFactory} only, which will point toward a buffered factory
-     * wrapping this {@code DirectEpsgFactory} for efficienty.
+     * wrapping this {@code DirectEpsgFactory} for efficiency.
      */
     AbstractAuthorityFactory buffered = this;
 
@@ -987,7 +987,7 @@ public abstract class DirectEpsgFactory extends DirectAuthorityFactory
      * Returns the name for the {@link IdentifiedObject} to construct. This method also search for
      * alias.
      *
-     * @param name The name for the {@link IndentifiedObject} to construct.
+     * @param name The name for the {@link IdentifiedObject} to construct.
      * @param code The EPSG code of the object to construct.
      * @param remarks Remarks, or {@code null} if none.
      * @return The name together with a set of properties.
@@ -1056,7 +1056,7 @@ public abstract class DirectEpsgFactory extends DirectAuthorityFactory
      * Returns the name for the {@link IdentifiedObject} to construct. This method also search for
      * alias.
      *
-     * @param name The name for the {@link IndentifiedObject} to construct.
+     * @param name The name for the {@link IdentifiedObject} to construct.
      * @param code The EPSG code of the object to construct.
      * @param area The area of use, or {@code null} if none.
      * @param scope The scope, or {@code null} if none.

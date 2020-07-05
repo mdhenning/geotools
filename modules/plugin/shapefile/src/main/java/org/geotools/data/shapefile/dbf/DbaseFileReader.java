@@ -24,6 +24,7 @@ import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -185,7 +186,7 @@ public class DbaseFileReader implements FileReader, Closeable {
         this.useMemoryMappedBuffer = useMemoryMappedBuffer;
         this.randomAccessEnabled = (channel instanceof FileChannel);
         streamLogger.open();
-        header = new DbaseFileHeader();
+        header = new DbaseFileHeader(stringCharset);
 
         // create the ByteBuffer
         // if we have a FileChannel, lets map it
@@ -203,7 +204,7 @@ public class DbaseFileReader implements FileReader, Closeable {
         } else {
             // Force useMemoryMappedBuffer to false
             this.useMemoryMappedBuffer = false;
-            header.readHeader(channel, charset);
+            header.readHeader(channel);
             // Some other type of channel
             // size the buffer so that we can read 4 records at a time (and make the buffer
             // cacheable)
@@ -212,7 +213,7 @@ public class DbaseFileReader implements FileReader, Closeable {
             buffer = NIOUtilities.allocate(header.getRecordLength());
             // fill it and reset
             fill(buffer, channel);
-            buffer.flip();
+            ((Buffer) buffer).flip();
             this.currentOffset = header.getHeaderLength();
         }
 
@@ -560,7 +561,7 @@ public class DbaseFileReader implements FileReader, Closeable {
                         break;
                     } else {
                         final String string = fastParse(bytes, fieldOffset, fieldLen).trim();
-                        Class clazz = header.getFieldClass(fieldNum);
+                        Class<?> clazz = header.getFieldClass(fieldNum);
                         if (clazz == Integer.class) {
                             try {
                                 object = Integer.parseInt(string);

@@ -27,13 +27,18 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.geotools.data.jdbc.FilterToSQL;
 import org.geotools.data.postgis.filter.FilterFunction_pgNearest;
 import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.filter.FilterCapabilities;
 import org.geotools.filter.LengthFunction;
+import org.geotools.filter.LiteralExpressionImpl;
 import org.geotools.filter.function.DateDifferenceFunction;
 import org.geotools.filter.function.FilterFunction_area;
+import org.geotools.filter.function.FilterFunction_equalTo;
 import org.geotools.filter.function.FilterFunction_strConcat;
 import org.geotools.filter.function.FilterFunction_strEndsWith;
 import org.geotools.filter.function.FilterFunction_strEqualsIgnoreCase;
@@ -48,6 +53,7 @@ import org.geotools.filter.function.FilterFunction_strToUpperCase;
 import org.geotools.filter.function.FilterFunction_strTrim;
 import org.geotools.filter.function.FilterFunction_strTrim2;
 import org.geotools.filter.function.InArrayFunction;
+import org.geotools.filter.function.JsonPointerFunction;
 import org.geotools.filter.function.math.FilterFunction_abs;
 import org.geotools.filter.function.math.FilterFunction_abs_2;
 import org.geotools.filter.function.math.FilterFunction_abs_3;
@@ -70,6 +76,7 @@ import org.opengis.feature.type.AttributeDescriptor;
 import org.opengis.feature.type.GeometryDescriptor;
 import org.opengis.filter.BinaryComparisonOperator;
 import org.opengis.filter.MultiValuedFilter;
+import org.opengis.filter.MultiValuedFilter.MatchAction;
 import org.opengis.filter.NativeFilter;
 import org.opengis.filter.PropertyIsBetween;
 import org.opengis.filter.PropertyIsEqualTo;
@@ -184,8 +191,10 @@ class FilterToSqlHelper {
 
             // array functions
             caps.addType(InArrayFunction.class);
-        }
 
+            // compare functions
+            caps.addType(FilterFunction_equalTo.class);
+        }
         // native filter support
         caps.addType(NativeFilter.class);
 
@@ -612,12 +621,50 @@ class FilterToSqlHelper {
             out.write("trim(both ' ' from ");
             string.accept(delegate, String.class);
             out.write(")");
+        } else if (function instanceof JsonPointerFunction) {
+            encodeJsonPointer(function, extraData);
         } else {
             // function not supported
             return false;
         }
 
         return true;
+    }
+
+    private void encodeJsonPointer(Function jsonPointer, Object extraData) throws IOException {
+        Expression json = getParameter(jsonPointer, 0, true);
+        Expression pointer = getParameter(jsonPointer, 1, true);
+        if (json instanceof PropertyName && pointer instanceof Literal) {
+            // if not a string need to cast the json attribute
+            boolean needCast =
+                    extraData != null
+                            && extraData instanceof Class
+                            && !extraData.equals(String.class);
+
+            if (needCast) out.write('(');
+            json.accept(delegate, null);
+            out.write(" ::json ");
+            String strPointer = ((Literal) pointer).getValue().toString();
+            List<String> pointerEl =
+                    Stream.of(strPointer.split("/"))
+                            .filter(p -> !p.equals(""))
+                            .collect(Collectors.toList());
+            for (int i = 0; i < pointerEl.size(); i++) {
+                String p = pointerEl.get(i);
+                if (i != pointerEl.size() - 1) out.write(" -> ");
+                // using for last element the ->> operator
+                // to have a text instead of a json returned
+                else out.write(" ->> ");
+                Literal elPointer = new LiteralExpressionImpl(p);
+                Class binding = NumberUtils.isParsable(p) ? Integer.class : String.class;
+                elPointer.accept(delegate, binding);
+            }
+            if (needCast) {
+                // cast from text to needed type
+                out.write(')');
+                out.write(cast("", (Class) extraData));
+            }
+        }
     }
 
     Expression getParameter(Function function, int idx, boolean mandatory) {
@@ -683,6 +730,10 @@ class FilterToSqlHelper {
 
     boolean isArray(Class clazz) {
         return clazz != null && clazz.isArray();
+    }
+
+    boolean isArrayType(Expression exp) {
+        return isArray(exp) || delegate.getExpressionType(exp).isArray();
     }
 
     void visitArrayComparison(
@@ -924,6 +975,29 @@ class FilterToSqlHelper {
         return extraData;
     }
 
+    public Object visit(FilterFunction_equalTo filter, Object extraData) {
+        Expression left = getParameter(filter, 0, true);
+        Expression right = getParameter(filter, 1, true);
+        Expression type = getParameter(filter, 2, true);
+        String matchType = (String) type.evaluate(null);
+        PropertyIsEqualTo equal =
+                CommonFactoryFinder.getFilterFactory(null)
+                        .equal(left, right, false, MatchAction.valueOf(matchType));
+        if (isArrayType(left) && isArrayType(right) && matchType.equalsIgnoreCase("ANY")) {
+            visitArrayComparison(
+                    CommonFactoryFinder.getFilterFactory(null)
+                            .equal(left, right, false, MatchAction.valueOf(matchType)),
+                    left,
+                    right,
+                    null,
+                    null,
+                    "&&");
+        } else {
+            equal.accept(delegate, extraData);
+        }
+        return extraData;
+    }
+
     private Class<?> getBaseType(Expression expr) {
         Class<?> type = delegate.getExpressionType(expr);
         if (type == null && expr instanceof Literal) {
@@ -1036,6 +1110,25 @@ class FilterToSqlHelper {
     }
 
     /**
+     * Detects and return an equalTo function if found, otherwise null
+     *
+     * @param filter filter to evaluate
+     * @return FilterFunction_equalTo if found
+     */
+    public FilterFunction_equalTo getEqualTo(PropertyIsEqualTo filter) {
+        Expression expr1 = filter.getExpression1();
+        Expression expr2 = filter.getExpression2();
+        if (expr2 instanceof FilterFunction_equalTo) {
+            return (FilterFunction_equalTo) expr2;
+        }
+        if (expr1 instanceof FilterFunction_equalTo) {
+            return (FilterFunction_equalTo) expr1;
+        } else {
+            return null;
+        }
+    }
+
+    /**
      * Detects and return a FilterFunction_pgNearest if found, otherwise null
      *
      * @param filter filter to evaluate
@@ -1077,5 +1170,31 @@ class FilterToSqlHelper {
     public Integer getFeatureTypeGeometryDimension() {
         GeometryDescriptor descriptor = delegate.getFeatureType().getGeometryDescriptor();
         return (Integer) descriptor.getUserData().get(Hints.COORDINATE_DIMENSION);
+    }
+
+    public boolean isSupportedEqualFunction(PropertyIsEqualTo filter) {
+        FilterFunction_pgNearest nearest = getNearestFilter(filter);
+        InArrayFunction inArray = getInArray(filter);
+        FilterFunction_equalTo equalTo = getEqualTo(filter);
+        return nearest != null || inArray != null || equalTo != null;
+    }
+
+    public Object visitSupportedEqualFunction(
+            PropertyIsEqualTo filter,
+            SQLDialect dialect,
+            BiConsumer<Geometry, StringBuffer> encodeGeometryValue,
+            Object extraData) {
+        FilterFunction_pgNearest nearest = getNearestFilter(filter);
+        InArrayFunction inArray = getInArray(filter);
+        FilterFunction_equalTo equalTo = getEqualTo(filter);
+        if (nearest != null) {
+            return visit(
+                    nearest, extraData, new NearestHelperContext(dialect, encodeGeometryValue));
+        } else if (inArray != null) {
+            return visit(inArray, extraData);
+        } else if (equalTo != null) {
+            return visit(equalTo, extraData);
+        }
+        return null;
     }
 }

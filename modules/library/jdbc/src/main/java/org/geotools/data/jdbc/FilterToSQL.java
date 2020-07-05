@@ -44,6 +44,7 @@ import org.geotools.filter.LikeFilterImpl;
 import org.geotools.filter.capability.FunctionNameImpl;
 import org.geotools.filter.function.InFunction;
 import org.geotools.filter.spatial.BBOXImpl;
+import org.geotools.jdbc.EnumMapper;
 import org.geotools.jdbc.JDBCDataStore;
 import org.geotools.jdbc.JoinPropertyName;
 import org.geotools.jdbc.PrimaryKey;
@@ -561,8 +562,17 @@ public class FilterToSQL implements FilterVisitor, ExpressionVisitor {
         try {
             if (filter.getFilter() instanceof PropertyIsNull) {
                 Expression expr = ((PropertyIsNull) filter.getFilter()).getExpression();
-                expr.accept(this, extraData);
+                if (isEnumerated(expr)) {
+                    // skip enum remapping
+                    writeEncodedField(
+                            Integer.class,
+                            (PropertyName) expr,
+                            (AttributeDescriptor) expr.evaluate(featureType));
+                } else {
+                    expr.accept(this, extraData);
+                }
                 out.write(" IS NOT NULL ");
+
             } else {
                 out.write("NOT (");
                 filter.getFilter().accept(this, extraData);
@@ -824,6 +834,28 @@ public class FilterToSQL implements FilterVisitor, ExpressionVisitor {
         Class rightContext = getExpressionType(left);
         Class leftContext = getExpressionType(right);
 
+        encodeBinaryComparisonOperator(filter, extraData, left, right, leftContext, rightContext);
+    }
+
+    /**
+     * Encode a BinaryComparisonOperator to SQL
+     *
+     * @param filter the comparison operator to be turned to SQL
+     * @param extraData extraData
+     * @param left left parameter of the binary operator
+     * @param right right parameter of the binary operator
+     * @param leftContext expression type of the right parameter used as context for the left
+     *     parameter
+     * @param rightContext expression type of the left parameter used as context for the right
+     *     parameter
+     */
+    protected void encodeBinaryComparisonOperator(
+            BinaryComparisonOperator filter,
+            Object extraData,
+            Expression left,
+            Expression right,
+            Class leftContext,
+            Class rightContext) {
         // case sensitivity
         boolean matchCase = true;
         if (!filter.isMatchingCase()) {
@@ -839,6 +871,13 @@ public class FilterToSQL implements FilterVisitor, ExpressionVisitor {
         String type = (String) extraData;
 
         try {
+            // for comparisons with enumerated types, back-map the values to numbers, to allow
+            // database index usage
+            if (isEnumerated(right) || isEnumerated(left)) {
+                encodeEnumeratedComparison(right, left, type, matchCase);
+                return;
+            }
+
             if (matchCase) {
                 writeBinaryExpressionMember(left, leftContext);
                 out.write(" " + type + " ");
@@ -865,10 +904,97 @@ public class FilterToSQL implements FilterVisitor, ExpressionVisitor {
                 f.setParameters(Arrays.asList(right));
                 f.accept(this, Arrays.asList(rightContext));
             }
-
         } catch (java.io.IOException ioe) {
             throw new RuntimeException(IO_ERROR, ioe);
         }
+    }
+
+    private void encodeEnumeratedComparison(
+            Expression right, Expression left, String type, boolean matchCase) throws IOException {
+        EnumMapper mapper = getEnumMapper(right);
+        if (mapper != null) {
+            PropertyName rightName = (PropertyName) right;
+            if (left instanceof Literal) {
+                String value = left.evaluate(null, String.class);
+                Integer code = mapper.fromString(value, matchCase);
+                if (code == null) {
+                    out.write("FALSE");
+                } else {
+                    out.write(String.valueOf(code));
+                    out.write(" " + type + " ");
+                    writeEncodedField(
+                            Integer.class,
+                            rightName,
+                            (AttributeDescriptor) right.evaluate(featureType));
+                }
+            } else {
+                out.write("CASE ");
+                if (!matchCase) {
+                    out.write("lower(");
+                    writeBinaryExpressionMember(left, Integer.class);
+                    out.write(")");
+                }
+                for (Map.Entry<String, Integer> entry : mapper.getStringToInteger().entrySet()) {
+                    out.write("WHEN '" + entry.getKey() + "' THEN " + entry.getValue() + "\n");
+                }
+                out.write("END");
+                out.write(" " + type + " ");
+                writeEncodedField(
+                        Integer.class,
+                        rightName,
+                        (AttributeDescriptor) right.evaluate(featureType));
+            }
+        } else {
+            mapper = getEnumMapper(left);
+
+            PropertyName leftName = (PropertyName) left;
+            if (right instanceof Literal) {
+                String value = right.evaluate(null, String.class);
+                Integer code = mapper.fromString(value, matchCase);
+                if (code == null) {
+                    out.write("FALSE");
+                } else {
+                    writeEncodedField(
+                            Integer.class,
+                            leftName,
+                            (AttributeDescriptor) left.evaluate(featureType));
+                    out.write(" " + type + " ");
+                    out.write(String.valueOf(code));
+                }
+            } else {
+                writeEncodedField(
+                        Integer.class, leftName, (AttributeDescriptor) left.evaluate(featureType));
+                out.write(" " + type + " ");
+                out.write("CASE ");
+                if (!matchCase) {
+                    out.write("lower(");
+                    writeBinaryExpressionMember(right, Integer.class);
+                    out.write(")");
+                }
+                for (Map.Entry<String, Integer> entry : mapper.getStringToInteger().entrySet()) {
+                    out.write("WHEN '" + entry.getKey() + "' THEN " + entry.getValue() + "\n");
+                }
+                out.write("END");
+            }
+        }
+    }
+
+    private boolean isEnumerated(Expression ex) {
+        return getEnumMapper(ex) != null;
+    }
+
+    private EnumMapper getEnumMapper(Expression ex) {
+        if (ex instanceof PropertyName) {
+            AttributeDescriptor ad = (AttributeDescriptor) ex.evaluate(featureType);
+            if (ad != null) {
+                Object o = ad.getUserData().get(JDBCDataStore.JDBC_ENUM_MAP);
+                if (o instanceof EnumMapper) {
+                    return (EnumMapper) o;
+                }
+            }
+        }
+
+        return null;
     }
 
     /** Writes out an expression, wrapping it in parenthesis if it's a binary one */
@@ -970,7 +1096,15 @@ public class FilterToSQL implements FilterVisitor, ExpressionVisitor {
         Expression expr = filter.getExpression();
 
         try {
-            expr.accept(this, extraData);
+            if (isEnumerated(expr)) {
+                // skip enum remapping
+                writeEncodedField(
+                        Integer.class,
+                        (PropertyName) expr,
+                        (AttributeDescriptor) expr.evaluate(featureType));
+            } else {
+                expr.accept(this, extraData);
+            }
             out.write(" IS NULL ");
         } catch (java.io.IOException ioe) {
             throw new RuntimeException(IO_ERROR, ioe);
@@ -1371,36 +1505,63 @@ public class FilterToSQL implements FilterVisitor, ExpressionVisitor {
             // first evaluate expression against feautre type get the attribute,
             //  this handles xpath
             AttributeDescriptor attribute = null;
+            EnumMapper mapper = null;
             try {
                 attribute = (AttributeDescriptor) expression.evaluate(featureType);
+                if (attribute != null) {
+                    mapper = (EnumMapper) attribute.getUserData().get(JDBCDataStore.JDBC_ENUM_MAP);
+                }
             } catch (Exception e) {
                 // just log and fall back on just encoding propertyName straight up
                 String msg = "Error occured mapping " + expression + " to feature type";
                 LOGGER.log(Level.WARNING, msg, e);
             }
-            String encodedField;
-            if (attribute != null) {
-                encodedField = fieldEncoder.encode(escapeName(attribute.getLocalName()));
-                if (target != null && target.isAssignableFrom(attribute.getType().getBinding())) {
-                    // no need for casting, it's already the right type
-                    target = null;
-                }
-            } else {
-                // fall back to just encoding the property name
-                encodedField = fieldEncoder.encode(escapeName(expression.getPropertyName()));
+
+            // handle integer mapped enumerations
+            if (mapper != null) {
+                out.write("CASE ");
             }
 
-            // handle destination type if necessary
-            if (target != null) {
-                out.write(cast(encodedField, target));
-            } else {
-                out.write(encodedField);
+            writeEncodedField(target, expression, attribute);
+
+            // If we got here, it means the property is used inside some expression or function,
+            // for this case we expand the property. For comparisons instead, the literal is
+            // backmapped to an integer when possible, to allow index usage
+            if (mapper != null) {
+                out.write("\n ");
+                for (Map.Entry<Integer, String> entry : mapper.getIntegerToString().entrySet()) {
+                    out.write("WHEN " + entry.getKey() + " THEN '" + entry.getValue() + "'\n");
+                }
+                out.write("END");
             }
 
         } catch (java.io.IOException ioe) {
             throw new RuntimeException("IO problems writing attribute exp", ioe);
         }
         return extraData;
+    }
+
+    private void writeEncodedField(
+            Class target, PropertyName expression, AttributeDescriptor attribute)
+            throws IOException {
+        String encodedField;
+        if (attribute != null) {
+            encodedField = fieldEncoder.encode(escapeName(attribute.getLocalName()));
+            if (target != null && target.isAssignableFrom(attribute.getType().getBinding())) {
+                // no need for casting, it's already the right type
+                target = null;
+            }
+        } else {
+            // fall back to just encoding the property name
+            encodedField = fieldEncoder.encode(escapeName(expression.getPropertyName()));
+        }
+
+        // handle destination type if necessary
+        if (target != null) {
+            out.write(cast(encodedField, target));
+        } else {
+            out.write(encodedField);
+        }
     }
 
     /**
@@ -1494,11 +1655,14 @@ public class FilterToSQL implements FilterVisitor, ExpressionVisitor {
      * helper to do a safe convesion of expression to a number
      */
     Number safeConvertToNumber(Expression expression, Class target) {
+        Object evaluated = expression.evaluate(null);
+        // don't try conversion for arrays, to avoid wrong arraytosingle conversion
+        if (evaluated != null && evaluated.getClass().isArray()) {
+            return null;
+        }
         return (Number)
                 Converters.convert(
-                        expression.evaluate(null),
-                        target,
-                        new Hints(ConverterFactory.SAFE_CONVERSION, true));
+                        evaluated, target, new Hints(ConverterFactory.SAFE_CONVERSION, true));
     }
 
     /**
