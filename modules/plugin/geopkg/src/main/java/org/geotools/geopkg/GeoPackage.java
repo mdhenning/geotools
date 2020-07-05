@@ -67,8 +67,8 @@ import org.geotools.jdbc.JDBCFeatureStore;
 import org.geotools.jdbc.PrimaryKey;
 import org.geotools.jdbc.util.SqlUtil;
 import org.geotools.referencing.CRS;
-import org.geotools.styling.Style;
 import org.geotools.referencing.crs.DefaultEngineeringCRS;
+import org.geotools.styling.Style;
 import org.geotools.util.logging.Logging;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
@@ -88,7 +88,7 @@ import org.sqlite.Function;
  * @author Justin Deoliveira, OpenGeo
  * @author Niels Charlier
  */
-public class GeoPackage implements Closeable, StyleStore{
+public class GeoPackage implements Closeable, StyleStore {
 
     static final Logger LOGGER = Logging.getLogger(GeoPackage.class);
 
@@ -1762,27 +1762,27 @@ public class GeoPackage implements Closeable, StyleStore{
         return new GeoPkgDataStoreFactory(writerConfig).createDataStore(params);
     }
 
-	@Override
-	public boolean hasStyle(String typeName) throws IOException {
-		// TODO Auto-generated method stub
-		return false;
-	}
+    @Override
+    public boolean hasStyle(String typeName) throws IOException {
+        // TODO Auto-generated method stub
+        return false;
+    }
 
-	@Override
-	public Style getStyle(String typeName) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
+    @Override
+    public Style getStyle(String typeName) throws IOException {
+        // TODO Auto-generated method stub
+        return null;
+    }
 
-	@Override
-	public void removeStyle(String typeName) throws IOException {
-		// TODO Auto-generated method stub
-		
-	}
+    @Override
+    public void removeStyle(String typeName) throws IOException {
+        // TODO Auto-generated method stub
 
-	@Override
-	public void storeStyle(String typeName, Style style) throws IOException {
-		// TODO Auto-generated method stub
-		
-	}
+    }
+
+    @Override
+    public void storeStyle(String typeName, Style style) throws IOException {
+        // TODO Auto-generated method stub
+
+    }
 }

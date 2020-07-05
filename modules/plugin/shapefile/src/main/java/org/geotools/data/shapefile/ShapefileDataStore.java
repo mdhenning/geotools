@@ -530,27 +530,27 @@ public class ShapefileDataStore extends ContentDataStore implements FileDataStor
         removeEntry(entry.getName());
     }
 
-	@Override
-	public boolean hasStyle(String typeName) throws IOException {
-		// TODO Auto-generated method stub
-		return false;
-	}
+    @Override
+    public boolean hasStyle(String typeName) throws IOException {
+        // TODO Auto-generated method stub
+        return false;
+    }
 
-	@Override
-	public Style getStyle(String typeName) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
+    @Override
+    public Style getStyle(String typeName) throws IOException {
+        // TODO Auto-generated method stub
+        return null;
+    }
 
-	@Override
-	public void removeStyle(String typeName) throws IOException {
-		// TODO Auto-generated method stub
-		
-	}
+    @Override
+    public void removeStyle(String typeName) throws IOException {
+        // TODO Auto-generated method stub
 
-	@Override
-	public void storeStyle(String typeName, Style style) throws IOException {
-		// TODO Auto-generated method stub
-		
-	}
+    }
+
+    @Override
+    public void storeStyle(String typeName, Style style) throws IOException {
+        // TODO Auto-generated method stub
+
+    }
 }
